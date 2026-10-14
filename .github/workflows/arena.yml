@@ -30,7 +30,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.job }}
-      - run: unzip -q bundle.zip -d /tmp/b
+      - name: unpack
+        env:
+          BUNDLE_KEY: ${{ secrets.BUNDLE_KEY }}
+        run: |
+          if [ -f bundle.enc ]; then openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -in bundle.enc -out /tmp/bundle.zip -pass env:BUNDLE_KEY; else cp bundle.zip /tmp/bundle.zip; fi
+          unzip -q /tmp/bundle.zip -d /tmp/b
       - run: pip install -q uv && uv venv -q -p 3.14 /tmp/v && uv pip install -q -p /tmp/v/bin/python cambc==2.1.4
       - run: BC_SHARD='${{ matrix.shard }}/${{ inputs.shards }}' /tmp/v/bin/python /tmp/b/harness/remote_job.py /tmp/b/job.json out --cambc /tmp/v/bin/cambc
       - uses: actions/upload-artifact@v4
