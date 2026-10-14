@@ -2,7 +2,8 @@ name: decode
 # harness/loss_report.py (Battlecode repo): decode site replays with the engine's visualiser wasm and
 # run the loss autopsy. decode: shard i of N of the replays per machine (harness/loss_job.py decode ->
 # node harness/replay_dump26.mjs); analyse: every decoded game -> harness/autopsy.py. The bundle
-# carries the replays, the wasm and the scripts, so a change there needs no edit here.
+# carries the replays, the wasm and the scripts, so a change there needs no edit here. This repo is
+# public: artifacts go up AES-encrypted with BUNDLE_KEY (like the bundle) and the logs print counts only.
 run-name: ${{ inputs.job }}
 on:
   workflow_dispatch:
@@ -39,10 +40,16 @@ jobs:
           unzip -q /tmp/bundle.zip -d /tmp/b
       - name: decode shard ${{ matrix.shard }}/${{ inputs.shards }}
         run: python3 /tmp/b/harness/loss_job.py decode /tmp/b '${{ matrix.shard }}/${{ inputs.shards }}' out
+      - name: seal
+        env:
+          BUNDLE_KEY: ${{ secrets.BUNDLE_KEY }}
+        run: |
+          mkdir -p sealed
+          tar czf - -C out . | openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt -out sealed/out.enc -pass env:BUNDLE_KEY
       - uses: actions/upload-artifact@v4
         with:
           name: d${{ matrix.shard }}
-          path: out/
+          path: sealed/out.enc
           retention-days: 1
   analyse:
     needs: decode
@@ -53,21 +60,28 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.job }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: d*
+          path: enc
       - name: unpack
         env:
           BUNDLE_KEY: ${{ secrets.BUNDLE_KEY }}
         run: |
           openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -in bundle.enc -out /tmp/bundle.zip -pass env:BUNDLE_KEY
           unzip -q /tmp/bundle.zip -d /tmp/b
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: d*
-          path: dl
-          merge-multiple: true
+          mkdir -p dl
+          for f in enc/*/out.enc; do openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -in "$f" -pass env:BUNDLE_KEY | tar xzf - -C dl; done
       - name: analyse
         run: python3 /tmp/b/harness/loss_job.py analyse /tmp/b dl out
+      - name: seal
+        env:
+          BUNDLE_KEY: ${{ secrets.BUNDLE_KEY }}
+        run: |
+          mkdir -p sealed
+          tar czf - -C out . | openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -salt -out sealed/out.enc -pass env:BUNDLE_KEY
       - uses: actions/upload-artifact@v4
         with:
           name: analysis
-          path: out/
+          path: sealed/out.enc
           retention-days: 1
