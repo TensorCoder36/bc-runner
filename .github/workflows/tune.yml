@@ -1,0 +1,46 @@
+name: tune
+# harness/tune_gh.py (Battlecode repo): one shard of a tune_batch job per machine. The shard list
+# comes in as an input (no setup job); the engine install command, its Python and cambc come from
+# the bundle's job.json (= harness/remote.py ENGINE_INSTALL / ENGINE_PY / ENGINE_CLI), so a
+# version bump there needs no edit here.
+run-name: ${{ inputs.job }}
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: branch holding bundle.zip
+        required: true
+      shards:
+        description: number of shards (BC_SHARD i/N)
+        required: true
+      matrix:
+        description: JSON list of shard indices, e.g. [0,1,2]
+        required: true
+jobs:
+  play:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJson(inputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.job }}
+      - run: unzip -q bundle.zip -d /tmp/b
+      - name: install the engine (command from job.json)
+        run: |
+          cmd=$(python3 -c 'import json; print(json.load(open("/tmp/b/job.json"))["install"])')
+          echo "$cmd"
+          bash -c "$cmd"
+      - name: play shard ${{ matrix.shard }}/${{ inputs.shards }}
+        run: |
+          py=$(python3 -c 'import json; print(json.load(open("/tmp/b/job.json"))["python"])')
+          cli=$(python3 -c 'import json; print(json.load(open("/tmp/b/job.json"))["cambc"])')
+          BC_SHARD='${{ matrix.shard }}/${{ inputs.shards }}' "$py" /tmp/b/harness/remote_job.py /tmp/b/job.json out --cambc "$cli"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: r${{ matrix.shard }}
+          path: out/result.json
+          retention-days: 1
