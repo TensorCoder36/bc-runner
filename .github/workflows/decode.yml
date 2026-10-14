@@ -1,0 +1,73 @@
+name: decode
+# harness/loss_report.py (Battlecode repo): decode site replays with the engine's visualiser wasm and
+# run the loss autopsy. decode: shard i of N of the replays per machine (harness/loss_job.py decode ->
+# node harness/replay_dump26.mjs); analyse: every decoded game -> harness/autopsy.py. The bundle
+# carries the replays, the wasm and the scripts, so a change there needs no edit here.
+run-name: ${{ inputs.job }}
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: branch holding bundle.enc
+        required: true
+      shards:
+        description: number of decode machines
+        required: true
+      matrix:
+        description: JSON list of shard indices, e.g. [0,1,2]
+        required: true
+jobs:
+  decode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJson(inputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.job }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: unpack
+        env:
+          BUNDLE_KEY: ${{ secrets.BUNDLE_KEY }}
+        run: |
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -in bundle.enc -out /tmp/bundle.zip -pass env:BUNDLE_KEY
+          unzip -q /tmp/bundle.zip -d /tmp/b
+      - name: decode shard ${{ matrix.shard }}/${{ inputs.shards }}
+        run: python3 /tmp/b/harness/loss_job.py decode /tmp/b '${{ matrix.shard }}/${{ inputs.shards }}' out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: d${{ matrix.shard }}
+          path: out/
+          retention-days: 1
+  analyse:
+    needs: decode
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.job }}
+      - name: unpack
+        env:
+          BUNDLE_KEY: ${{ secrets.BUNDLE_KEY }}
+        run: |
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -in bundle.enc -out /tmp/bundle.zip -pass env:BUNDLE_KEY
+          unzip -q /tmp/bundle.zip -d /tmp/b
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: d*
+          path: dl
+          merge-multiple: true
+      - name: analyse
+        run: python3 /tmp/b/harness/loss_job.py analyse /tmp/b dl out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: analysis
+          path: out/
+          retention-days: 1
